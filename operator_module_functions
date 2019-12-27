@@ -1,0 +1,77 @@
+### 정렬의 기초는 sorted() 함수.
+이 sorted 함수를 가장 쉽게 쓰는 방법 중 하나는 key 매개변수에 호출할 함수를 지정하는 것이다.
+
+예를 들어, 다음은 대소 문자를 구분하지 않는 문자열 비교이다.
+예제 1. 
+>>> sorted("This is a test string from Andrew".split(), key=str.lower)
+-> ['a', 'Andrew', 'from', 'is', 'string', 'test', 'This']
+
+예제 2. 
+student_tuples = [
+    ('john', 'A', 15),
+    ('jane', 'B', 12),
+    ('dave', 'B', 10),
+]
+>>> sorted(student_tuples, key=lambda student: student[2])   # sort by age
+-> [('dave', 'B', 10), ('jane', 'B', 12), ('john', 'A', 15)]
+
+예제 3. 
+class Student:
+    def __init__(self, name, grade, age):
+        self.name = name
+        self.grade = grade
+        self.age = age
+    def __repr__(self):
+        return repr((self.name, self.grade, self.age))
+        
+student_objects = [
+    Student('john', 'A', 15),
+    Student('jane', 'B', 12),
+    Student('dave', 'B', 10),
+]
+>>> sorted(student_objects, key=lambda student: student.age)   # sort by age
+-> [('dave', 'B', 10), ('jane', 'B', 12), ('john', 'A', 15)]
+
+
+### operator 모듈 함수
+위에서 보여준 키 함수 패턴은 매우 일반적이므로, 파이썬은 액세스 함수를 더 쉽고 빠르게 만드는 편리 함수를 제공한다. 
+operator 모듈에는 
+1. itemgetter()
+2. attrgetter()
+3. methodcaller() 
+함수가 있다.
+아래의 함수들을 사용하면, 위의 예제가 더 간단해지고 빨라진다.
+
+from operator import itemgetter, attrgetter
+
+예제 1.
+sorted(student_tuples, key=itemgetter(2))
+[('dave', 'B', 10), ('jane', 'B', 12), ('john', 'A', 15)]
+
+예제 2.
+sorted(student_objects, key=attrgetter('age'))
+[('dave', 'B', 10), ('jane', 'B', 12), ('john', 'A', 15)]
+
+### operator 모듈 함수는 다중 수준의 정렬을 허용합니다. 예를 들어, 먼저 grade로 정렬한 다음 age로 정렬하려면, 이렇게 합니다:
+
+예제1. 
+>>> sorted(student_tuples, key=itemgetter(1,2))
+-> [('john', 'A', 15), ('dave', 'B', 10), ('jane', 'B', 12)]
+
+예제2. 
+>>> sorted(student_objects, key=attrgetter('grade', 'age'))
+-> [('john', 'A', 15), ('dave', 'B', 10), ('jane', 'B', 12)]
+
+### 오름차순과 내림차순
+list.sort()와 sorted()는 모두 불리언 값을 갖는 reverse 매개 변수를 받아들인다. 
+예를 들어, 학생 데이터를 역 age 순서로 얻으려면 아래와 같이 한다.
+
+예제 1. 
+sorted(student_tuples, key=itemgetter(2), reverse=True)
+[('john', 'A', 15), ('jane', 'B', 12), ('dave', 'B', 10)]
+
+
+출처 : 파이썬 다큐먼츠 (https://docs.python.org/ko/3/howto/sorting.html)
+
+
+
