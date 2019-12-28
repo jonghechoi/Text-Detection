@@ -1,0 +1,132 @@
+defaultdict()는 딕셔너리를 만드는 dict클래스의 서브클래스이다.
+
+작동하는 방식은 거의 동일한데, defaultdict()는 인자로 주어진 객체(default-factory)의 기본값을 딕셔너리값의 초깃값으로 지정할 수 있다.
+숫자, 리스트, 셋등으로 초기화 할 수 있기때문에 여러 용도로 사용할 수 있다.
+
+- 기본적인 작동방식을 살펴보면
+>>> from collections import defaultdict    # 외부함수이기 때문에 import 해야한다.
+>>> int_dict = defaultdict(int)
+>>> int_dict
+
+ defaultdict(<class 'int'>, {})            # 디폴트값이 int인 딕셔너리
+
+
+- 위와 같이 설정을 하면 값을 지정하지 않은 키는 그 값이 0으로 지정된다.
+>>> int_dict['key1']
+
+0
+
+>>> int_dict
+
+defaultdict(<class 'int'>, {'key1': 0}) 
+
+
+- 키에 명시적으로 값을 지정하게 되면 그 값이 지정된다.
+>>> int_dict['key2'] = 'test'
+>>> int_dict
+
+defaultdict(<class 'int'>, {'key1': 0, 'key2': 'test'}) 
+
+
+
+- defaultdict라는 말 그대로 처음 키를 지정할 때 값을 주지 않으면 해당 키에 대한 값을 디폴트 값을 지정하겠다는 뜻이다.
+리스트, 셋을 디폴트 값으로 지정해 보자.
+
+1. default 값으로 list를 줬을때 작동방식 
+>>> list_dict = defaultdict(list)
+>>> list_dict
+
+defaultdict(<class 'list'>, {})   # 디폴트값이 list인 딕셔너리
+>>> list_dict['key1']             # 값을 지정하지 않으면 빈 리스트로 초기화
+
+[]
+
+>>> list_dict['key2'] = 'test'    # 값을 지정하면 해당값으로 초기화
+>>> list_dict
+
+defaultdict(<class 'list'>, {'key1': [], 'key2': 'test'})   
+
+
+2. default 값으로 set을 줬을때 작동방식 
+>>> set_dict = defaultdict(set)
+>>> set_dict
+
+defaultdict(<class 'set'>, {})     # 디폴트값이 set인 딕셔너리
+
+>>> set_dict['key1']               # 값을 지정하지 않으면 빈 리스트로 초기화
+
+set()
+
+>>> set_dict['key2'] = 'test'      # 값을 지정하면 해당값으로 초기화
+>>> set_dict
+
+defaultdict(<class 'set'>, {'key1': set(), 'key2': 'test'})      
+
+
+
+- 언제 defaultdict()를 사용하는것이 좋을까?
+키의 개수를 세야하는 상황이나, 리스트나 셋의 항목을 정리해야 하는 상황에 적절하다.
+문자열에 나타난 알파벳의 횟수를 계산하는 방법을 살펴보자.
+
+1. default(int) 활용예제
+
+>>> letters = 'dongdongfather'
+>>> letters_dict = defaultdict(int)
+>>> for k in letters:
+			letters_dict[k] += 1         #키에 대한 값이 없으면 값을 0으로 초기화                     
+>>> letters_dict
+
+defaultdict(<class 'int'>, {'d': 2, 'o': 2, 'n': 2, 'g': 2, 'f': 1, 'a': 1, 't': 1, 'h': 1, 'e': 1, 'r': 1})
+
+
+딕셔너리에 키가 있는지(해당 알파벳) 확인 절차를 거칠 필요없이 바로 값을 1증가시켜주면 된다.
+없으면 그 키를 만들어주고 초깃값을 0으로 세팅해 주기 때문이다. 비교를 위해 defaultdict()를 사용하지 않은 방법을 보면
+
+defaultdict()를 사용하지 않을때
+
+>>> letters = 'dongdongfather'
+>>> letters_dict = {}
+>>> for k in letters:
+		if not k in letters_dict:         # 키가 있는지 확인
+			letters_dict[k] = 0           # 없으면 0으로 초깃값 할당
+		letters_dict[k] += 1
+>>> letters_dict
+
+{'d': 2, 'o': 2, 'n': 2, 'g': 2, 'f': 1, 'a': 1, 't': 1, 'h': 1, 'e': 1, 'r': 1}
+
+위와 같이 키가 존재하는지 검사하는 코드와 0으로 초기화하는 코드가 추가로 필요하다.
+리스트나 셋을 이용해서 여러개의 값을 합쳐야 할때도 쉽게 처리할 수 있다.
+다음 예제에서 내가 하고 싶은것은 주어진 성과 이름 튜플에서 각 성에 대해 어떤 이름들이 있는가 분류하는것이다.
+
+
+2. defaultdict(list) 활용예제
+
+>>> name_list = [('kim','sungsu'), ('kang','hodong'), ('park','jisung'), ('kim','yuna'), ('park','chanho')]
+>>> ndict = defaultdict(list)
+>>> name_list = [('kim','sungsu'), ('kang','hodong'), ('park','jisung'), ('kim','yuna'), ('park','chanho'), ('kang','hodong')]
+>>> ndict = defaultdict(list)
+>>> for k, v in name_list:                # 리스트의 요소가 튜플이기 때문에 k, v값으로 할당
+        ndict[k].append(v)                # 값이 리스트이기때문에 append()를 이용해서 항목추가
+>>> ndict
+
+defaultdict(<class 'list'>, {'kim': ['sungsu', 'yuna'], 'kang': ['hodong', 'hodong'], 'park': ['jisung', 'chanho']})
+
+
+이렇게 간단하게 각 성이 가진 이름을 취합할 수 있다.
+위 리스트에 보면 name_list에서 'kang hodong'이 두번 나왔기때문에 딕셔너리에서도 'hodong'이 두번 출력된걸 알 수 있다. 
+보통 이런 중복자료는 의미가 없기때문에 없애주고 싶다. 이럴때 set을 기본값으로 주면 바로 해결된다.
+set은 중복값을 허용하지 않기 때문이다.   
+
+3. defaultdict(set) 활용예제
+
+>>> name_list = [('kim','sungsu'), ('kang','hodong'), ('park','jisung'), ('kim','yuna'), ('park','chanho'), ('kang','hodong')]
+>>> nset = defaultdict(set)          # 초깃값을 셋으로 설정
+>>> for k, v in name_list:
+        ndict[k].add(v)              # list는 append()를 사용해서 항목추가. set은 add()를 사용해서 항목추가
+>>> ndict
+
+defaultdict(<class 'set'>, {'kim': {'sungsu', 'yuna'}, 'kang': {'hodong'}, 'park': {'jisung', 'chanho'}})
+
+
+
+출처: https://dongdongfather.tistory.com/69 [파이 키우기]
