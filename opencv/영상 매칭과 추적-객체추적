@@ -1,0 +1,234 @@
+##### 8.5 객체 추적
+### 8.5.1 동영상 배경 제거
+# BackgroundSubtractorMOG으로 배경 제거
+import cv2, numpy as np
+
+cap = cv2.VideoCapture('walking.avi')
+fps = cap.get(cv2.CAP_PROP_FPS)
+delay = int(1000/fps)
+
+fgbg = cv2.bgsegm.createBackgroundSubtractorMOG() # 빛의 변화가 심한 장면에는 cv2.createBackgroundSubtractorMOG2() - 그림자까지 표시
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        break
+    
+    fgmask = fgbg.apply(frame)
+    # 책은 fgbg.getBackgroundImage() 함수가 cv2.imshow에 들어가는데 그렇게 하면 error 발생.
+    cv2.imshow('frame', frame)
+    cv2.imshow('bg', fgmask)
+    if cv2.waitKey(delay) & 0xff == 27: # 그냥 cv2.waitKey(delay) == 27로 해도 
+                                        # esc의 값 ASCII값 27이 cv2.waitKey에 담기므로 화면은 꺼진다.
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+
+
+
+### 8.5.2 옵티컬 플로
+# cv2.calcOpticalFlowPyrLK 추적
+import numpy as np, cv2
+
+cap = cv2.VideoCapture('walking.avi')
+fps = cap.get(cv2.CAP_PROP_FPS)
+delay = int(1000/fps)
+
+color = np.random.randint(0, 255, (200, 3)) # 추적 경로를 그리기 위한 랜덤 색상
+lines = None # 추적 선을 그릴 이미지 저장 변수
+prevImg = None
+# calcOpticalFlowPyrLK 중지 요건 설정
+# EPS = epsilon. 최소 정확도가 10보다 작으면 중지한다.
+# COUNT = max_iter. 최대 반복 횟수가 0.03을 채우면 중지한다. 
+termcriteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03)
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    
+    if not ret:
+        break
+    
+    img_draw = frame.copy()
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    
+    if prevImg is None: # 최초 프레임의 경우
+        prevImg = gray
+        # 추적선을 그릴 이미지를 프레임 크기에 맞게 생성
+        lines = np.zeros_like(frame)
+        # 추적 시작을 위한 코너 검출
+        prevPt = cv2.goodFeaturesToTrack(prevImg, 200, 0.01, 10)
+        
+    else:
+        nextImg = gray
+        # 옵티컬 플로로 다음 프레임의 코너점 찾기
+        # nextPt: 다음 프레임에서 이동한 코너 특징점
+        nextPt, status, err = cv2.calcOpticalFlowPyrLK(prevImg, nextImg, prevPt, None, criteria=termcriteria)
+            
+        # 대응점이 있는 코너, 움직인 코너 선별. status: 결과 상태 벡터, nextPts와 같은 길이. 대응점이 있으면 1, 없으면 0
+        prevMv = prevPt[status==1]
+        nextMv = nextPt[status==1]
+        for i, (p, n) in enumerate(zip(prevMv, nextMv)):
+            px, py = p
+            nx, ny = n
+            # 이전 코너와 새로운 코너에 선 그리기
+            cv2.line(lines, (px, py), (nx, ny), color[i].tolist(), 2)
+            # 새로운 코너에 점 그리기
+            cv2.circle(img_draw, (nx, ny), 2, color[i].tolist(), -1)
+
+        # 누적된 추적 선을 출력 이미지에 합성
+        img_draw = cv2.add(img_draw, lines)
+        # 다음 프레임을 위한 프레임과 코너점 이월
+        prevImg = nextImg
+        prevPt = nextMv.reshape(-1, 1, 2)
+        
+    cv2.imshow('OpticalFlose-LK', img_draw)
+    key = cv2.waitKey(delay)
+    
+    if key == 27:
+        break
+    elif key == 8: # backspace: 추적 이력 지우기
+        prevImg = None
+
+cv2.destroyAllWindows()
+cap.release()
+        
+        
+
+# cv2.calcOpticalFlowFarneback 추적
+import cv2, numpy as np
+
+'''
+- 아래는 np.mgrid 와 np.meshgrid의 차이를 알려준다.
+
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(8, 8))
+
+xvalueu, yvalues = np.array([0, 1, 2, 3, 4]), np.array([0, 1, 2, 3, 4])
+x1, y1 = np.meshgrid(xvalues, yvalues)
+
+plt.subplot(1,2,1)
+plt.plot(x1, y1, marker='.', color='k', linestyle='none')
+plt.title('meshgrid')
+
+aaa = np.random.randint(0, 255, (10, 5, 3))
+h, w = aaa.shape[:2] # h=10, w=5
+y2, x2 = np.mgrid[0:h:1, 0:w:1]
+
+plt.subplot(1,2,2)
+plt.plot(x2, y2, marker='.', color='k', linestyle='none')
+plt.title('mgrid')
+plt.show()
+'''
+
+def drawFlow(img, flow, step=16):
+    h, w = img.shape[:2]
+    # 16픽셀 간격의 그리드 인덱스 구하기
+    idx_y, idx_x = np.mgrid[step/2:h:step, step/2:w:step].astype(np.int)
+    
+    # (1728, 2)의 행렬이 반환되고 각각의 행은 [x, y]값을 가진다.
+    # np.stack에서 axis = -1을 하면 각각의 행렬에서 한 인자씩 나와 (1번째행렬, 2번째행렬) 식으로 들어가게 된다.
+    indices = np.stack( (idx_x, idx_y), axis = -1).reshape(-1, 2) 
+
+    for x, y in indices: # 인덱스 순회 / x: 열, y: 행
+        # 각 그리드 인덱스 위치에 점 그리기
+        cv2.circle(img, (x, y), 1, (0,255,0), -1)
+        # 각 그리드 인덱스에 해당하는 플로 결과값(이동 거리)
+        # flow값을 알기 위해서는 행렬에 [행, 열]을 넣어줘야 하므로 [y, x]로 들어가야 한다. 
+        dx, dy = flow[y, x].astype(np.int) 
+        cv2.line(img, (x,y), (x+dx, y+dy), (0,255,0), 2, cv2.LINE_AA)
+
+
+prev = None
+
+cap = cv2.VideoCapture('walking.avi')
+fps = cap.get(cv2.CAP_PROP_FPS)
+delay = int(1000/fps)ㅁ
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    
+    if not ret:
+        break
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    
+    if prev is None: # 최초 프레임의 경우
+        prev = gray        
+    else:
+        # 이전, 이후 프레임으로 옵티컬 플로 계산
+        flow = cv2.calcOpticalFlowFarneback(prev, gray, None, 0.5, 3, 15, 3, 5, 1.1, cv2.OPTFLOW_FARNEBACK_GAUSSIAN)
+            
+        # 계산 결과 그리기, 선언 함수 호출
+        drawFlow(frame, flow)
+        
+        # 다음 프레임을 위한 프레임 이월
+        prev = gray
+        
+    cv2.imshow('OpticalFlose-Farnerback', frame)
+    
+    if cv2.waitKey(1) == 27:
+        break
+
+cap.release() 
+cv2.destroyAllWindows()
+    
+        
+        
+        
+### 8.5.3 MeanShift 추적
+# 아래 camShift 라는 상위호환이 있기 때문에 굳이 이것을 사용할 필요는 없을것 같다.
+
+
+
+### 8.5.4 CamShift 추적
+import numpy as np, cv2
+
+roi_hist = None     # 추적 객체 히스토그램 저장 변수
+win_name = 'Camshift Tracking'
+termination =  (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 1)
+
+cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+while cap.isOpened():
+    ret, frame = cap.read()    
+    img_draw = frame.copy()
+    
+    if roi_hist is not None:  # 추적 대상 객체 히스토그램 등록 됨
+        # 전체 영상 hsv 컬로 변환 
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        # 전체 영상 히스토그램과 roi 히스트그램 역투영 
+        dst = cv2.calcBackProject([hsv], [0], roi_hist, [0,180], 1)
+        # 역 투영 결과와 초기 추적 위치로 평균 이동 추적
+        ret, (x,y,w,h) = cv2.CamShift(dst, (x,y,w,h), termination)
+        # 새로운 위치에 사각형 표시
+        cv2.rectangle(img_draw, (x,y), (x+w, y+h), (0,255,0), 2)
+        # 컬러 영상과 역투영 영상을 통합해서 출력
+        result = np.hstack((img_draw, cv2.cvtColor(dst, cv2.COLOR_GRAY2BGR)))
+    else:  # 추적 대상 객체 히스토그램 등록 안됨
+        cv2.putText(img_draw, "Hit the Space to set target to track", \
+                (10,30),cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 1, cv2.LINE_AA)
+        result = img_draw
+
+    cv2.imshow(win_name, result)
+    key = cv2.waitKey(1) & 0xff
+    if  key == 27: # Esc
+        break
+    elif key == ord(' '): # 스페이스-바, ROI 설정
+        x,y,w,h = cv2.selectROI(win_name, frame, False)
+        if w and h :    # ROI가 제대로 설정됨
+            # 초기 추적 대상 위치로 roi 설정 
+            roi = frame[y:y+h, x:x+w]
+            # roi를 HSV 컬러로 변경
+            roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+            mask = None
+            # roi에 대한 히스토그램 계산
+            roi_hist = cv2.calcHist([roi], [0], mask, [180], [0,180])
+            cv2.normalize(roi_hist, roi_hist, 0, 255, cv2.NORM_MINMAX)
+        else:      # ROI 설정 안된 경우
+            roi_hist = None
+else:
+    print('no camera!')
+cap.release()
+cv2.destroyAllWindows()
