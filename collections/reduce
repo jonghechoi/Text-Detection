@@ -1,0 +1,24 @@
+- reduce 함수 
+: iterable 한 2번째인자를 지정한 함수(첫번째 인자)에 따라 계산 후 단일값 반환
+
+
+from functools import reduce
+
+# 예제 1
+func = lambda x, y: x+y
+result = reduce(func, [1,2,3,4,5]) 
+print(result)
+# 15
+
+func = lambda x, y: x if (x > y) else y
+result = reduce(func, [1,100, 2, 55])
+print(result)
+# 100
+
+
+# 예제 2 - 초기값을 설정해주고자 한다면 세번째 인자에 지정
+
+func = lambda x, y: x+y
+result = reduce(func, [1,2,3,4,5], 100) 
+print(result)
+# 115
