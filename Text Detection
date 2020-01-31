@@ -1,0 +1,941 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Jan 21 21:06:43 2020
+
+@author: jonghe
+"""
+
+##### 글자 검출 개인 프로젝트 1단계
+### 영상에서 글자가 있을만한 영역 추출 
+import cv2, numpy as np
+
+cap = cv2.VideoCapture('character.mp4')
+
+if cap.isOpened():
+    while True:
+        ret, frame = cap.read()
+        if ret:
+            img_draw = frame.copy()
+            img_w, img_h = frame.shape[:2]
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            blur = cv2.GaussianBlur(gray, (11,11), 0)
+            
+            # 잡영제거를 위해 스레쉬홀드
+            thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 5, 3)
+            
+            # threshold를 했기 때문에 캐니엣지 검출을 해도 굳이 크게 개선되는 점은 없는 것으로 보인다.
+            #edges = cv2.Canny(thresh, 100, 200)
+            
+            # 커널 크기를 조절함으로써 전경이라고 판단되는 부분이 더 확실하게 연결될 수 있도록 한다. (글자들이 따로따로 구분되지 않게)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11,11)) 
+            morph2 = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+            
+            contours, hierarchy = cv2.findContours(morph2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            #cv2.drawContours(frame, contours, -1, (0,255,0), 1)
+            
+            box = []
+            for i in range(len(contours)):
+                contour_obj = contours[i]
+                x, y, w, h = cv2.boundingRect(contour_obj)
+                
+                ## 본격적인 조건 3단계
+                if (w >= 5 and h >= 5) and not (( w > float(img_w*0.5)) and ( h > float(img_h*0.5))):
+                    box.append(cv2.boundingRect(contour_obj))
+                #if (w >= 5 and h >= 5) and (cv2.contourArea(contour_obj) > 10.0) and not (( w > float(img_w*0.5)) and ( h > float(img_h*0.5))):
+                #    box.append(cv2.boundingRect(contour_obj))
+            
+            # 다른 컨투어박스들을 포함해버리는 큰 컨투어박스는 글자가 아니므로 제외한다.
+            box_sorted = sorted(box, key=lambda x:x[0])
+            xy_aligned_box = []
+            for idx, i in enumerate(box_sorted):
+                x_aligned_box = []
+                for j in box_sorted[idx+1:]:
+                    if ((i[0] <= j[0]) and ((i[0]+i[2]) >= (j[0]+j[2]))): 
+                        x_aligned_box.append(j)
+                
+                for k in x_aligned_box:
+                    if ((i[1] <= k[1]) and ((i[1]+i[3]) >= (k[1]+k[3]))):
+                        xy_aligned_box.append(i)
+                        break
+            
+            for i in xy_aligned_box:
+                box.remove(i)
+            
+            for x, y, w, h in box:
+                cv2.rectangle(img_draw, (x,y), (x+w,y+h), (0,255,0), 1)
+                
+            cv2.imshow('character', img_draw)
+            if cv2.waitKey(10) & 0xff == 27:
+                break
+        else:
+            break
+    
+else:
+    print('load failed')
+    
+cap.release()
+cv2.destroyAllWindows()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+##### 글자 검출 개인 프로젝트 2단계
+'''
+- 딥러닝으로 해당 부분이 글자를 포함하고 있을 확률 계산
+
+1. 글자포함 이미지 vs 글자로 인식될만한 이미지(character-likely image)를 학습을 위해 각각 3천장씩 준비한다.
+    - 실질적으로는 50장을 준비하고 keras의 Image Generator을 이용하여 증식시킨다.
+    
+    - character image는 크롤링(2-1)한 이미지를 포토샵 툴을 이용해서 준비한다.
+    
+    - 글자로 인식될만한 이미지는 아래와 같이 생성한다.
+        - 쇠창살이나, 창문등을 직접 사진으로 찍는다.
+        - 1단계에서 만들어 놓은 코드에 넣고 글자가 없는데 글자라고 인식한 부분을 추출한다.
+        - 추출된 부분에서 개인적인 판단으로 문자와 비슷한 형상을 따로 저장한다. 
+    
+2. 모델이 구축되면 1단계 코드에서 나오는 frame을 실시간으로 predict()해서 글자가 들어
+   있을 확률이 일정 수준 이상인 부분들만 cv2.rectangle()를 띄운다.
+
+'''
+### 2-1 데이터 수집
+## 2-1-1 이미지 스크롤링
+import time
+import urllib.request
+from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.common.keys import Keys
+
+binary = 'C:\Program Files\chromedriver/chromedriver.exe'
+
+browser = webdriver.Chrome(binary)
+
+browser.get("https://www.google.co.kr/imghp?hl=ko&tab=wi&ei=l1AdWbegOcra8QXvtr-4Cw&ved=0EKouCBUoAQ")
+
+elem = browser.find_element_by_xpath("//*[@class='gLFyf gsfi']")
+
+elem.send_keys("영화 폰트")
+elem.submit()
+
+for i in range(1, 5):
+    browser.find_element_by_xpath("//body").send_keys(Keys.END)
+    try:                      # browser에 element 중 id가 "smb"인 것이 있다면 클릭하고 없다면 time.sleep(5)만 한다.
+        browser.find_element_by_id("smb").click()
+        time.sleep(5)
+    except:
+        time.sleep(5)
+        
+time.sleep(10)
+html = browser.page_source
+soup = BeautifulSoup(html, "lxml")
+
+def fetch_list_url():
+    params = []
+    imgList = soup.find_all("img", class_="rg_ic rg_i")
+    for im in imgList:
+        try :
+            params.append(im["src"])
+        except KeyError:
+            params.append(im["data-src"])
+    return params
+
+def fetch_detail_url():
+    params = fetch_list_url()
+    for idx,p in enumerate(params,1):
+        urllib.request.urlretrieve(p, "C:\\Users\\최종희\\signboard_file\\" + str(idx) + ".jpg")
+
+
+if __name__ == '__main__':
+    fetch_detail_url()
+    browser.quit()
+
+
+
+
+
+## 2-1-2. character-likely 이미지 전처리
+# 2-2-1에서 크롤링을 통해 추출한 이미지들의 이름을 정렬된 형태로 변경해준다.
+import os
+
+total_path = os.getcwd()
+detailed_path = total_path + '\\character-likely_img(before_cropped)'
+
+
+raw_name_list = os.listdir(detailed_path)
+
+for idx, i in enumerate(raw_name_list, 1):
+    print(detailed_path + '\\' + i , '->', detailed_path + '\\' +str(idx) + '.jpg' )
+    os.rename(detailed_path + '\\' + i, detailed_path + '\\' +str(idx) + '.jpg')
+    
+
+## 2-1-3 character-likely 이미지에서 ROI 추출 & canny 처리하여 저장
+'''
+1. 1단계 처리를 한 상태의 이미지에 추가로 cv2.rectangle()마다 번호를 달아놓는다.
+2. 사진 한장씩을 cv2.imshow() 하면서 waitKey(0)를 걸어놓고 space 키가 눌리면 사진이 내려가고
+   가장 character-likely한 박스의 번호를 input()하게 한다.
+3. input()된 번호의 박스의 np.array를 dict의 value로 넣는다. 이때 key는 해당 사진의 번호로 한다.
+
+※ 아래에서 1단계 처리를 한 사진들을 보면 character_likely 이미지로 보일만한 것들을 박스에 담지 않은 것이 있다.
+   따라서 'd'키를 누르면 cv2.selectROI()을 통해서 직접 character_likely 이미지를 지정하기로 한다.
+'''
+
+import os
+import pickle
+import cv2, numpy as np
+import matplotlib.pyplot as plt
+
+front_path = os.getcwd()
+back_path = 'character-likely_img(before_cropped)'
+detailed_path = front_path + '\\' + back_path
+raw_name_list = os.listdir(detailed_path)
+
+num_dict = 1
+img_dict = {}
+while len(img_dict) != 50:
+    for k in raw_name_list:
+        
+        if len(img_dict) == 50:
+            break
+        
+        img_name = back_path + '\\' + k
+        img = cv2.imread(img_name)
+        
+        img_w, img_h = img.shape[:2]
+    
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (11,11), 0)
+        
+        thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 5, 3)
+    
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11,11)) 
+        morph2 = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        
+        contours, hierarchy = cv2.findContours(morph2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        box = []
+        for i in range(len(contours)):
+            contour_obj = contours[i]
+            x, y, w, h = cv2.boundingRect(contour_obj)
+            rect_area = w * h
+            aspect_ratio = float(w)/h
+            
+            ## 본격적인 조건 3단계
+            if (w >= 5 and h >= 5) and (cv2.contourArea(contour_obj) > 10.0) and not (( w > float(img_w*0.5)) and ( h > float(img_h*0.5))):
+                box.append(cv2.boundingRect(contour_obj))
+        
+        # 다른 컨투어박스들을 포함해버리는 큰 컨투어박스는 글자가 아니므로 제외한다.
+        box_sorted = sorted(box, key=lambda x:x[0])
+        xy_aligned_box = []
+        for idx, i in enumerate(box_sorted):
+            x_aligned_box = []
+            for j in box_sorted[idx+1:]:
+                if ((i[0] <= j[0]) and ((i[0]+i[2]) >= (j[0]+j[2]))): 
+                    x_aligned_box.append(j)
+            
+            for k in x_aligned_box:
+                if ((i[1] <= k[1]) and ((i[1]+i[3]) >= (k[1]+k[3]))):
+                    xy_aligned_box.append(i)
+                    break
+        
+        for i in xy_aligned_box:
+            box.remove(i)
+        
+        # 다시 모폴로지 그레디언트가 적용된 영상으로 보이게 하는 이유는 좀 더 character-likely 한 영역을 찾기 위함이다.
+       
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5,5))
+        morph = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, kernel) 
+        
+        
+        for idx, (x, y, w, h) in enumerate(box, 1):
+            cv2.putText(morph, '%d'%idx, (x,y), cv2.FONT_HERSHEY_SCRIPT_SIMPLEX, 0.5, 255)
+            cv2.rectangle(morph, (x,y), (x+w,y+h), 255, 1)
+        
+        cv2.imshow('Image', morph)
+        key = cv2.waitKey(0)
+        if key & 0xFF == 27:
+            break
+        elif key == ord(' '):
+            continue
+        # 박스를 선택하고 싶다면 'c' 직접 설정하고 싶으면 'd'
+        elif key == ord('c'):
+            #cv2.destroyWindow('Image')
+            try:
+                num = int(input('선택하고싶은 박스의 번호를 입력하세요'))
+                x, y, w, h = box[num-1] 
+                roi = img[y:y+h, x:x+w]
+                img_dict[num_dict] = roi
+                num_dict += 1
+            except ValueError:
+                print('잘못 입력했습니다')
+                continue
+            
+        elif key == ord('d'):
+            x, y, w, h = cv2.selectROI('selectROI', morph, False, False)
+            if w and h: # w, h 에 0이 아닌 숫자가 담기면 True 반환
+                roi = img[y:y+h, x:x+w]
+                img_dict[num_dict] = roi
+                num_dict += 1
+                
+                cv2.imshow('cropped', roi)
+                cv2.waitKey(0)
+                cv2.destroyWindow('cropped')
+    
+# pickle 파일로 추출된 영역 담기
+dict_path = 'img_dict.pickle'
+file = open(dict_path, 'wb')
+pickle.dump(img_dict, file)
+file.close()
+
+cv2.destroyAllWindows()
+
+
+# img_dict가 있는 piekle 파일을 읽어서 실제 사진으로 넣기
+file2 = open(dict_path, 'rb')
+content = pickle.load(file2)
+file2.close()
+  
+path = '.\\character-likely_img(cropped)\\'
+for idx, i in content.items():    
+    cv2.imwrite(path + str(idx) + '.jpg', i)
+
+
+# 실제 저장된 사진들을 다시 canny 엣지 검출 처리를 해서 저장하기.
+'''
+- MorphGradient 연산은 이미지가 뭉개(?)지기 때문에 학습하는데 적합하지 않다.
+def MorphGradient(dir, new_dir):
+    raw_img_list = os.listdir(dir)
+    
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5,5))
+    for idx, i in enumerate(raw_img_list, 1):
+        raw_img = cv2.imread(dir +'\\'+ i, cv2.IMREAD_GRAYSCALE)
+        morph = cv2.morphologyEx(raw_img, cv2.MORPH_GRADIENT, kernel)
+        cv2.imwrite( new_dir + str(idx) + '.jpg',  morph)
+'''
+import os, cv2
+
+def Canny(dir, new_dir):
+    raw_img_list = os.listdir(dir)
+    
+    for idx, i in enumerate(raw_img_list, 1):
+        raw_img = cv2.imread(dir +'\\'+ i, cv2.IMREAD_GRAYSCALE)
+        canny = cv2.Canny(raw_img, 100, 200)
+        cv2.imwrite( new_dir + str(idx) + '.jpg',  canny) 
+    
+# character_img -> canny 처리하기
+origin_dir =  '.\\character_img(cropped)'
+new_dir_v = '.\\character_classification\character_img(canny)\\'
+Canny(origin_dir, new_dir_v)
+
+
+# character-likely_img -> canny 처리하기
+origin_dir =  '.\\character-likely_img(cropped)'
+new_dir_v = '.\\character_classification\character-likely_img(canny)\\'
+Canny(origin_dir, new_dir_v)
+
+
+
+
+
+
+
+
+####################################################################################
+'''
+2-1에서 생성된 이미지 데이터들로 모델을 학습시켰지만 제대로된 학습이 이루어지지 않았다. 이유는 간단했다. 학습에 사용되는
+데이터의 수가 50/50개로 매우 부족했던 것. 단순히 Keras의 image Generator 기능만을 믿고 턱없이 적은 수를 준비했던 것은 실수였다.
+
+따라서 더 많은 데이터 확보를 위해 아래와 같은 과정을 거쳤다.
+- character image는 KAIST에서 제공하는 것을 다운로드해 재처리
+- character-likely image는 크롤링 코드 + 재처리 코드를 작성해서 확보
+'''
+
+# 2-1-1(renewal) : 골목 사진 크롤링(240)
+# 2-1-2(renewal) : 픽셀 20x20 이상인 부분만 추출
+
+####################################################################################
+
+# 2-1-1(renewal) : 골목 사진 크롤링(240)
+import urllib.request
+from bs4 import BeautifulSoup
+from selenium import webdriver
+from selenium.webdriver.common.keys import Keys
+import time
+
+
+binary = 'C:\Program Files\chromedriver/chromedriver.exe'
+
+browser = webdriver.Chrome(binary)
+
+browser.get("https://www.google.co.kr/imghp?hl=ko&tab=wi&ei=l1AdWbegOcra8QXvtr-4Cw&ved=0EKouCBUoAQ")
+
+elem = browser.find_element_by_xpath("//*[@class='gLFyf gsfi']")
+
+elem.send_keys("주택가 골목 사진")
+elem.submit()
+
+for i in range(1, 20):
+    browser.find_element_by_xpath("//body").send_keys(Keys.END)
+    try:                      # browser에 element 중 id가 "smb"인 것이 있다면 클릭하고 없다면 time.sleep(5)만 한다.
+        browser.find_element_by_id("smb").click()
+        time.sleep(5)
+    except:
+        time.sleep(5)
+        
+time.sleep(10)
+html = browser.page_source
+soup = BeautifulSoup(html, "lxml")
+
+def fetch_list_url():
+    params = []
+    imgList = soup.find_all("img", class_="rg_ic rg_i")
+    for im in imgList:
+        try :
+            params.append(im["src"])
+        except KeyError:
+            params.append(im["data-src"])
+    return params
+
+def fetch_detail_url():
+    params = fetch_list_url()
+    for idx,p in enumerate(params,1):
+        urllib.request.urlretrieve(p, "C:\\Users\\최종희\\golmok\\" + str(idx) + ".jpg")
+
+if __name__ == '__main__':
+    fetch_detail_url()
+    browser.quit()
+
+
+
+
+
+# 2-2-2(renewal) : 픽셀 20x20 이상인 부분만 추출
+import os
+import cv2, numpy as np
+
+path = '.\\golmok'
+img = os.listdir(path)
+
+num = 0
+for i in img:
+    img = cv2.imread(path+'\\'+i)
+
+
+    img_w, img_h = img.shape[:2]
+    
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (11,11), 0)
+    
+    
+    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 5, 3)
+    
+    
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11,11)) 
+    morph2 = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    
+    contours, hierarchy = cv2.findContours(morph2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    
+    box = []
+    for i in range(len(contours)):
+        contour_obj = contours[i]
+        x, y, w, h = cv2.boundingRect(contour_obj)
+        rect_area = w * h
+        aspect_ratio = float(w)/h
+        
+        ## 본격적인 조건 3단계
+        if (w >= 20 and h >= 20) and (cv2.contourArea(contour_obj) > 10.0) and not (( w > float(img_w*0.5)) and ( h > float(img_h*0.5))):
+            box.append(cv2.boundingRect(contour_obj))
+    
+    
+    # 다른 컨투어박스들을 포함해버리는 큰 컨투어박스는 글자가 아니므로 제외한다.
+    box_sorted = sorted(box, key=lambda x:x[0])
+    xy_aligned_box = []
+    for idx, i in enumerate(box_sorted):
+        x_aligned_box = []
+        for j in box_sorted[idx+1:]:
+            if ((i[0] <= j[0]) and ((i[0]+i[2]) >= (j[0]+j[2]))): 
+                x_aligned_box.append(j)
+        
+        for k in x_aligned_box:
+            if ((i[1] <= k[1]) and ((i[1]+i[3]) >= (k[1]+k[3]))):
+                xy_aligned_box.append(i)
+                break
+    
+    for i in xy_aligned_box:
+        box.remove(i)
+    
+    box_large = sorted(box, key=lambda x:x[2]*x[3])
+
+    new_path = '.\\golmok_cropped\\'
+    for idx, (x, y, w, h) in enumerate(box_large[:5],1):    
+        cv2.imwrite(new_path + str(idx+5*num) + '.jpg', img[y:y+h, x:x+w])
+
+    num += 1
+
+# 2-1-3(renewal) : 저장된 character-likely image들을 다시 canny 엣지 검출 처리를 해서 저장
+import os, cv2
+
+def Canny(dir, new_dir):
+    raw_img_list = os.listdir(dir)
+    
+    for idx, i in enumerate(raw_img_list, 1):
+        raw_img = cv2.imread(dir +'\\'+ i, cv2.IMREAD_GRAYSCALE)
+        canny = cv2.Canny(raw_img, 100, 200)
+        cv2.imwrite( new_dir + str(idx) + '.jpg',  canny) 
+    
+# character_img -> canny 처리하기
+origin_dir =  '.\\character(cropped)'
+new_dir_v = '.\\character_classification\character_img(canny)\\'
+Canny(origin_dir, new_dir_v)
+
+
+# character-likely_img -> canny 처리하기
+origin_dir =  '.\\golmok(cropped)'
+new_dir_v = '.\\character_classification\character-likely_img(canny)\\'
+Canny(origin_dir, new_dir_v)
+
+
+
+
+
+# 2-1-4(renewal) : canny 엣지로 저장된 사진중에서 character_img들은 크기가 큰 것이 많다. 따라서 OpenCV를 이용해서 글자부분만 추출하는 과정을 거친다.
+import os
+import cv2, numpy as np
+import matplotlib.pyplot as plt
+
+path = '.\\character_img'
+img = os.listdir(path)
+
+num = 1
+for i in img:
+    img = cv2.imread(path+'\\'+i)
+
+    img_w, img_h = img.shape[:2]
+    
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (11,11), 0)
+        
+    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 5, 3)
+        
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11,11)) 
+    morph2 = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    
+    contours, hierarchy = cv2.findContours(morph2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+     
+    box = []
+    for i in range(len(contours)):
+        contour_obj = contours[i]
+        box.append(cv2.boundingRect(contour_obj))
+
+    # 가장 큰 박스 영역만을 가져온다.    
+    box_large = sorted(box, key=lambda x:x[2]*x[3], reverse=True)
+        
+    x, y, w, h = box_large[0]   
+    
+    new_path = '.\\character_canny_cropped\\'
+    cv2.imwrite(new_path + str(num) + '.jpg', img[y:y+h, x:x+w])
+
+    num += 1
+
+
+
+
+### 2-2 모델링
+import pickle
+import numpy as np
+from keras import optimizers
+from keras.models import Sequential
+from keras.layers.convolutional import Conv2D, MaxPooling2D
+from keras.layers import Dense, Activation, BatchNormalization, Dropout, Flatten
+from keras.preprocessing.image import ImageDataGenerator, array_to_img, img_to_array, load_img, image
+
+
+train_datagen = ImageDataGenerator(rescale=1./255)
+train_generator = train_datagen.flow_from_directory('C:\\Users\\최종희\\character_classification\\train',
+                                                    target_size=(32,32),
+                                                    batch_size=100,
+                                                    class_mode='binary')
+
+
+validation_datagen = ImageDataGenerator(rescale=1./255)
+validation_generator = validation_datagen.flow_from_directory('C:\\Users\\최종희\\character_classification\\validation',
+                                                    target_size=(32,32),
+                                                    batch_size=30,
+                                                    class_mode='binary')
+
+
+test_datagen = ImageDataGenerator(rescale=1./255)
+test_generator = test_datagen.flow_from_directory('C:\\Users\\최종희\\character_classification\\test',
+                                                    target_size=(32,32),
+                                                    batch_size=30,
+                                                    class_mode='binary')
+
+
+# 모델층 생성
+'''
+- 신경망은 총 7층의 컨볼루션 층과 2층의 FC층으로 구성했습니다.
+- 1단계 코드에서 나온 frame을 실시간으로 predict()해서 글자가 들어있을 확률이 일정 수준 이상인 부분들만
+  cv2.rectangle()를 띄우도록 하겠습니다.
+'''
+def Character_Model():
+    model = Sequential() 
+    
+    model.add(Conv2D(32, (3,3), padding='same', activation='relu', input_shape=(32,32,3))) 
+    model.add(Conv2D(64, (3,3), padding='same', activation='relu')) 
+    model.add(MaxPooling2D(pool_size=(2,2))) 
+    
+    model.add(Conv2D(128, (3,3), padding='same', activation='relu'))
+    model.add(Conv2D(128, (3,3), padding='same', activation='relu'))
+    model.add(MaxPooling2D(pool_size=(2,2)))
+    
+    model.add(Conv2D(256, (3,3), padding='same', activation='relu'))
+    model.add(Conv2D(256, (3,3), padding='same', activation='relu'))
+    model.add(Conv2D(256, (3,3), padding='same', activation='relu'))
+    model.add(MaxPooling2D(pool_size=(2,2)))
+    
+    model.add(Flatten())
+    model.add(Dropout(0.3))
+    
+    model.add(Dense(units=256, kernel_initializer='he_normal'))
+    model.add(BatchNormalization())
+    model.add(Activation('relu'))
+    model.add(Dropout(0.3))
+    
+    model.add(Dense(units=256, kernel_initializer='he_normal'))
+    model.add(BatchNormalization())
+    model.add(Activation('relu'))
+    model.add(Dropout(0.3))
+    model.add(Dense(units=1, activation='sigmoid')) 
+                                                                                                  
+    model.summary()
+
+    model.compile(loss='binary_crossentropy', optimizer=optimizers.Adam(lr=0.001, beta_1=0.9, beta_2=0.999), metrics=['accuracy'])
+
+    return model
+
+
+model = Character_Model()
+
+history = model.fit_generator(train_generator,
+                              steps_per_epoch=10, 
+                              epochs=300,
+                              validation_data=validation_generator,
+                              validation_steps=3)
+
+model.save('character_model_real_final_300.h5')
+
+
+# 결과들은 dict 형식으로 pickle파일에 저장
+acc = history.history['accuracy']
+val_acc = history.history['val_accuracy']
+loss = history.history['loss']
+val_loss = history.history['val_loss']
+
+accuracy_dict = {}
+for i, j in zip(['acc', 'val_acc', 'loss', 'val_loss'], [acc, val_acc, loss, val_loss]):
+    accuracy_dict[i] = j
+
+f = open('character_model_real_final.pickle', 'wb')
+pickle.dump(accuracy_dict, f)
+f.close()
+
+# pickle 파일로부터 결과값 불러오기
+ff = open('character_model_real_final.pickle', 'rb')
+accuracy = pickle.load(ff)
+ff.close()
+
+accuracy_redict = {}
+for idx, i in accuracy.items():
+    accuracy_redict[idx] = i
+
+
+epochs = range(len(accuracy_redict['acc']))
+
+plt.plot(epochs, accuracy_redict['acc'], 'b', label='Accuracy', linewidth=1)
+plt.plot(epochs, accuracy_redict['val_acc'], 'r', label='Val_accuracy', linewidth=1)
+plt.title('Train accuracy & Validation accuracy')
+plt.legend()
+
+plt.figure()
+
+# validation 데이터의 loss가 낮아지다가 높아지기시작하면 이는 과적합의 신호
+plt.plot(epochs, accuracy_redict['loss'], 'b', label='Loss', linewidth=1)
+plt.plot(epochs, accuracy_redict['val_loss'], 'r', label='Val_loss', linewidth=1)
+plt.title('Train loss & Validation loss')
+plt.legend()
+
+plt.show()
+
+
+
+# test 데이터에 대한 정확도
+import os, cv2
+from keras.models import load_model
+
+model = load_model('.\\character_res\\character_model_batch_1000.h5')
+
+scores = model.evaluate_generator(test_generator, steps=5)
+
+print('{0} : {1}'.format(model.metrics_names[0], round(scores[0],3)))
+print('{0} : {1}'.format(model.metrics_names[1], scores[1]*100))
+
+
+print(test_generator.class_indices)
+
+
+
+
+# 파라미터를 조정하면서 만들어진 여러 모델들을 비교해보기
+import os
+import cv2, numpy as np
+import matplotlib.pyplot as plt
+from keras.models import load_model 
+
+
+#model = load_model('.\\character_res\\character_model_reboot.h5')
+model = load_model('.\\character_res\\character_model_real_final_300.h5')
+#model = load_model('.\\character_res\\character_model_batch_50.h5')
+#model = load_model('.\\character_res\\character_model_batch_300.h5')
+#model = load_model('.\\character_res\\character_model_batch_1000.h5')
+
+
+
+def Test_Sample(model):    
+    path = '.\\character_test'
+    img_list = os.listdir(path)
+    
+    res_pred_list = []
+    for idx, i in enumerate(img_list, 1):
+        img = cv2.imread(path + '\\' + str(idx) + '.jpg')/255
+    
+        canny_resize = cv2.resize(img, (32,32), interpolation=cv2.INTER_AREA)
+        canny_res = canny_resize.reshape((1,) + canny_resize.shape)
+    
+        res_pred = model.predict(canny_res)
+        res_pred_list.append(res_pred[0][0])
+        
+    # threshold 값 조정하면서 가장 높은 예측률을 보이는 threshold를 반환하게 한다.
+    # 165개의 character image, 90개의 character_likely image
+    label = [0]*165 + [1]*90
+    threshold = np.arange(0, 1, 0.001)
+    
+    accuracy_list = []
+    for th in threshold:
+        pred = [1 if i >= th else 0 for i in res_pred_list]
+        
+        check = []
+        for i, j in zip(label, pred):
+            if i == j:
+                check.append(True)
+            else:
+                check.append(False)
+        
+        a = np.array(check)
+        accuracy_list.append((a.sum()/255)*100)
+     
+    max_point = max(accuracy_list)
+    max_index = threshold[accuracy_list.index(max_point)]
+    
+    plt.text(max_index, max_point+3, 'Max_point : %.2f%%, Threshold : %.3f'%(max_point, max_index))
+    plt.plot(threshold, accuracy_list, linestyle='--')
+    plt.title('Accuracy by Threshold')
+    plt.xlabel('Threshold')
+    plt.ylabel('Accuracy')
+    plt.ylim(0, 100)
+    
+    plt.show()
+    
+    return max_index
+
+
+if __name__ == '__main__':
+    thresh = Test_Sample(model)
+
+
+
+
+
+## predict
+import cv2, numpy as np
+
+# air.jpg
+def Predict(model, image, threshold):
+    img = cv2.imread(image)
+    img_w, img_h = img.shape[:2]
+    
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (11,11), 0)
+    
+    
+    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 5, 3)
+    
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11,11)) 
+    morph2 = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    
+    contours, hierarchy = cv2.findContours(morph2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    
+    box = []
+    for i in range(len(contours)):
+        contour_obj = contours[i]
+        x, y, w, h = cv2.boundingRect(contour_obj)
+        
+        if (w >= 5 and h >= 5) and (cv2.contourArea(contour_obj) > 10.0) and not (( w > float(img_w*0.5)) and ( h > float(img_h*0.5))):
+            box.append(cv2.boundingRect(contour_obj))
+    
+    box_sorted = sorted(box, key=lambda x:x[0])
+    xy_aligned_box = []
+    for idx, i in enumerate(box_sorted):
+        x_aligned_box = []
+        for j in box_sorted[idx+1:]:
+            if ((i[0] <= j[0]) and ((i[0]+i[2]) >= (j[0]+j[2]))): 
+                x_aligned_box.append(j)
+        
+        for k in x_aligned_box:
+            if ((i[1] <= k[1]) and ((i[1]+i[3]) >= (k[1]+k[3]))):
+                xy_aligned_box.append(i)
+                break
+    
+    for i in xy_aligned_box:
+        box.remove(i)
+    
+    # 모델 출력값의 클래스명 : {'character': 0, 'character_likely': 1}
+    canny = cv2.Canny(img, 100, 200)
+    
+    res_pred_list = []
+    for x, y, w, h in box:
+        canny_3dim_32 = canny[y:y+h, x:x+w]/255
+        
+        canny_resize = cv2.resize(canny_3dim_32, (28,28), interpolation=cv2.INTER_AREA)
+        
+        canny_resize_pad = np.pad(canny_resize, pad_width=2, mode='constant', constant_values=0)
+        canny_resize_32 = np.dstack([canny_resize_pad, canny_resize_pad, canny_resize_pad])
+        
+        canny_res = canny_resize_32.reshape((1,) + canny_resize_32.shape)
+    
+        res_pred = model.predict(canny_res)
+        res_pred_list.append(res_pred[0][0])
+        
+        if res_pred < threshold:
+            cv2.rectangle(img, (x,y), (x+w,y+h), (0,255,0), 2)
+            
+    
+    cv2.imshow('goal', img)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+
+
+if __name__ == '__main__':
+    Predict(model, 'lebron_james.jpg', thresh)
+    
+'teamviewer_test.jpg'
+'air.jpg'
+
+
+
+import time
+
+start = time.time()
+
+## 동영상 검출
+def PredictVideo(model, video, threshold):
+    start = time.time()
+    
+    cap = cv2.VideoCapture(video)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    delay = int(1000/fps)
+    
+    if cap.isOpened():
+        while True:
+            ret, frame = cap.read()
+            if ret:
+                img_draw = frame.copy()
+                img_w, img_h = frame.shape[:2]
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                blur = cv2.GaussianBlur(gray, (11,11), 0)
+                
+                # 잡영제거를 위해 스레쉬홀드
+                thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 5, 3)
+                
+                # threshold를 했기 때문에 캐니엣지 검출을 해도 굳이 크게 개선되는 점은 없는 것으로 보인다.
+                #edges = cv2.Canny(thresh, 100, 200)
+                
+                # 커널 크기를 조절함으로써 전경이라고 판단되는 부분이 더 확실하게 연결될 수 있도록 한다. (글자들이 따로따로 구분되지 않게)
+                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (11,11)) 
+                morph2 = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+                
+                contours, hierarchy = cv2.findContours(morph2, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                #cv2.drawContours(frame, contours, -1, (0,255,0), 1)
+                
+                box = []
+                for i in range(len(contours)):
+                    contour_obj = contours[i]
+                    x, y, w, h = cv2.boundingRect(contour_obj)
+                    
+                    ## 본격적인 조건 3단계
+                    if (w >= 5 and h >= 5) and (cv2.contourArea(contour_obj) > 10.0) and not (( w > float(img_w*0.5)) and ( h > float(img_h*0.5))):
+                        box.append(cv2.boundingRect(contour_obj))
+                
+                
+                # 다른 컨투어박스들을 포함해버리는 큰 컨투어박스는 글자가 아니므로 제외한다.
+                box_sorted = sorted(box, key=lambda x:x[0])
+                xy_aligned_box = []
+                for idx, i in enumerate(box_sorted):
+                    x_aligned_box = []
+                    for j in box_sorted[idx+1:]:
+                        if ((i[0] <= j[0]) and ((i[0]+i[2]) >= (j[0]+j[2]))): 
+                            x_aligned_box.append(j)
+                    
+                    for k in x_aligned_box:
+                        if ((i[1] <= k[1]) and ((i[1]+i[3]) >= (k[1]+k[3]))):
+                            xy_aligned_box.append(i)
+                            break
+                
+                for i in xy_aligned_box:
+                    box.remove(i)
+                
+                canny = cv2.Canny(frame, 100, 200)
+                
+                res_pred_list = []
+                for x, y, w, h in box:
+                    canny_3dim_32 = canny[y:y+h, x:x+w]/255
+                    
+                    canny_resize = cv2.resize(canny_3dim_32, (28,28), interpolation=cv2.INTER_AREA)
+                    
+                    canny_resize_pad = np.pad(canny_resize, pad_width=2, mode='constant', constant_values=0)
+                    canny_resize_32 = np.dstack([canny_resize_pad, canny_resize_pad, canny_resize_pad])
+                    
+                    canny_res = canny_resize_32.reshape((1,) + canny_resize_32.shape)
+                
+                    res_pred = model.predict(canny_res)
+                    res_pred_list.append(res_pred[0][0])
+                    
+                    if res_pred < threshold:
+                        cv2.rectangle(img_draw, (x,y), (x+w,y+h), (0,255,0), 2)
+                    
+                cv2.imshow('character', img_draw)
+                if cv2.waitKey(delay) & 0xff == 27:
+                    break
+            else:
+                break
+        
+    else:
+        print('load failed')
+        
+    cap.release()
+    print('time : {0}'.format(time.time() - start))
+    cv2.destroyAllWindows()
+
+
+if __name__ == '__main__':
+    PredictVideo(model, 'character.mp4', thresh)
